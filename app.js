@@ -34,9 +34,19 @@ const freqLabel = (t, staff) => {
   return { weekly: `Toda ${day}`, biweekly: `${day}, a cada 15 dias`, monthly: `1ª ${day} do mês` }[t.freq] || t.freq;
 };
 const check = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>';
+const LOGO = (size = 34) => `<svg class="logo" width="${size}" height="${size}" viewBox="0 0 40 40" aria-hidden="true"><rect width="40" height="40" rx="12" fill="#FF5B3A"/><path d="M11.5 20.5l6 6 11-13" fill="none" stroke="#fff" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+const BRAND = (size) => `<span class="brand">${LOGO(size)}<span class="wordmark">feitinho</span></span>`;
 const greet = () => { const h = new Date().getHours(); return h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite'; };
 const waLink = text => `https://wa.me/?text=${encodeURIComponent(text)}`;
 const staffUrl = token => `${location.origin}${location.pathname}?t=${token}`;
+// botões "WhatsApp" + "Copiar" para qualquer mensagem pronta
+const msgBtns = (text, label = 'WhatsApp', cls = 'btn sm') =>
+  `<a class="${cls}" href="${waLink(text)}" target="_blank" rel="noopener">${label}</a><button class="btn sm ghost" type="button" data-act="copy" data-text="${esc(text)}">Copiar</button>`;
+const firstName = n => String(n || '').trim().split(/\s+/)[0];
+const listLines = arr => arr.map(x => '• ' + x).join('\n');
+function remindText(s, missing) {
+  return `Oi, ${firstName(s.name)}! Tudo bem? Só lembrando o que ficou pra hoje:\n${listLines(missing.map(t => t.label))}\n\nQuando terminar, é só marcar no link: ${staffUrl(s.token)}\nObrigado! 🙏`;
+}
 
 // delegação de eventos
 const ACT = {}, FORM = {}, CHG = {}, INP = {};
@@ -134,10 +144,10 @@ function render() {
 // ───────── login ─────────
 function loginView() {
   return `<div class="center"><div class="card" style="gap:14px">
-    <h1>App da Casa</h1>
+    ${BRAND(40)}
     ${S.sent ? `<p>Enviamos um link para o seu e-mail. Abra o link neste mesmo aparelho para entrar.</p>
       <button class="btn" data-act="resend">Usar outro e-mail</button>`
-    : `<p class="sub">Rotina dos funcionários, cardápio e compras da casa em um só lugar.</p>
+    : `<h1 style="font-size:30px">Tudo feitinho, sem precisar cobrar.</h1><p class="sub">A lista do dia vai para o celular de cada pessoa que trabalha na sua casa. Você só confere.</p>
       <form data-form="login" style="display:flex;flex-direction:column;gap:10px">
         <label class="f">Seu e-mail<input type="email" name="email" required autocomplete="email" placeholder="voce@email.com"></label>
         <button class="btn primary big" type="submit">Receber link de acesso</button>
@@ -163,7 +173,7 @@ function onboardView() {
   const val = (k, def) => c[k] ?? def;
   const kidsN = Number(String(val('criancas', '2'))[0]);
   return `<div class="wrap">
-    <div><div class="top"><span class="house">Configuração</span><button class="btn sm" data-act="logout">Sair</button></div>
+    <div><div class="top">${BRAND(30)}<button class="btn sm" data-act="logout">Sair</button></div>
       <h1 style="margin-top:6px">Conte como é a sua casa</h1>
       <p class="sub">Só escolher. A gente sugere o que cada pessoa faz, e você ajusta depois.</p></div>
 
@@ -202,7 +212,7 @@ function onboardView() {
       ${S.ob.staff.map((s, i) => `<div style="display:flex;flex-direction:column;gap:8px;padding-bottom:12px;border-bottom:1px solid var(--line)">
         <div class="grid2">
           <label class="f">Função<select data-chg="obrole" data-i="${i}">${Object.entries(D.ROLES).map(([k, r]) => `<option value="${k}"${k === s.role ? ' selected' : ''}>${r.label}</option>`).join('')}</select></label>
-          <label class="f">Nome<input type="text" data-inp="obsname" data-i="${i}" value="${esc(s.name)}" maxlength="40" placeholder="${roleLabel(s.role)}"></label>
+          <label class="f">Nome<input type="text" data-inp="obsname" data-i="${i}" value="${esc(s.name)}" maxlength="40" placeholder="Ex.: Maria" required></label>
         </div>
         ${daysPicker('ob' + i, s.days, 'obday')}
         ${S.ob.staff.length > 1 ? `<button class="btn sm danger" data-act="obdel" data-i="${i}">Remover</button>` : ''}
@@ -238,13 +248,14 @@ ACT.obdel = d => { S.ob.staff.splice(+d.i, 1); render(); };
 ACT.obcreate = async (_d, btn) => {
   const defaults = { tipo: 'Apartamento', quartos: '3', banheiros: '2', lavabo: 'Sim', adultos: '2', criancas: '2', almoco: 'Em casa', serve: 'Babá', roupaCriancas: 'Babá', cama: 'Toda semana', mercado: 'Pedimos por app' };
   const cfg = { ...defaults, ...S.ob.cfg, extras: { ...S.ob.extras } };
+  if (S.ob.staff.some(s => !String(s.name || '').trim())) throw new Error('Escreva o nome de cada pessoa (ex.: Maria)');
   if (S.ob.staff.some(s => !s.days.length)) throw new Error('Escolha pelo menos um dia para cada pessoa');
   btn.disabled = true; btn.textContent = 'Criando…';
   try {
     const hid = must(await sb.rpc('create_household', { p_name: S.ob.name, p_config: cfg }));
     S.hhId = hid; S.hh = { config: cfg };
     await setMyName(S.ob.me);
-    for (const s of S.ob.staff) await addStaff(s.role, s.name || roleLabel(s.role), s.days, cfg);
+    for (const s of S.ob.staff) await addStaff(s.role, s.name, s.days, cfg);
     await loadAll();
     S.view = 'family'; S.tab = 'equipe'; render();
     toast('Casa criada! Agora mande o link para cada pessoa.');
@@ -272,7 +283,7 @@ function familyView() {
   const body = { hoje: hojeView, rotinas: rotinasView, agenda: agendaView, cardapio: cardapioView, compras: comprasView, equipe: equipeView }[S.tab]();
   const openAlerts = S.alerts.filter(a => !a.resolved_at).length;
   return `<div class="wrap">
-    <div class="top"><span class="house">${esc(S.hh?.name || 'Minha casa')}</span>
+    <div class="top">${BRAND(30)}
       <button class="btn sm${S.tab === 'equipe' ? ' primary' : ''}" data-act="tab" data-t="equipe">Equipe e casa</button></div>
     ${body}
   </div>
@@ -295,7 +306,15 @@ function hojeView() {
   const sname = id => S.staff.find(s => s.id === id)?.name || 'Equipe';
   const ago = t => { const m = Math.round((Date.now() - new Date(t)) / 60000); return m < 60 ? `há ${Math.max(m, 1)} min` : m < 1440 ? `há ${Math.round(m / 60)} h` : `há ${Math.round(m / 1440)} d`; };
   return `
-    <div><p class="sub">${dateLabel(d)}</p><h1>A casa hoje</h1></div>
+    ${(() => {
+      let tot = 0, ok = 0;
+      for (const s of working) { const l = S.tasks.filter(t => t.staff_id === s.id && t.active && scheduled(t, s, d)); tot += l.length; ok += l.filter(t => isDone(t.id, di)).length; }
+      return `<div class="hero"><span class="hero-house">${esc(S.hh?.name || 'Minha casa')} · ${dateLabel(d)}</span>
+        <h1>${greet()}${S.members.find(m => m.user_id === S.user?.id)?.name ? ', ' + esc(S.members.find(m => m.user_id === S.user?.id).name) : ''}</h1>
+        ${tot ? `<div class="hero-stat"><strong>${ok}<span>/${tot}</span></strong><span>tarefas feitas hoje</span></div><div class="bar dark"><i style="width:${Math.round(ok / tot * 100)}%"></i></div>`
+          : `<p class="hero-sub">${working.length ? 'Nenhuma tarefa programada para hoje.' : 'Ninguém da equipe trabalha hoje.'}</p>`}
+        ${alerts.length ? `<span class="hero-pill">${alerts.length} aviso${alerts.length > 1 ? 's' : ''} da equipe</span>` : ''}</div>`;
+    })()}
     ${!S.staff.length ? `<div class="card"><p>Comece cadastrando quem trabalha na casa.</p><button class="btn primary" data-act="tab" data-t="equipe">Cadastrar equipe</button></div>` : ''}
     ${alerts.length ? `<div class="card warn"><h2>Avisos</h2><div class="list">${alerts.map(a => `
       <div class="item" style="border-color:#EAD3AE"><div class="grow"><span class="t">${esc(a.label)}</span>
@@ -308,9 +327,10 @@ function hojeView() {
       const pct = list.length ? Math.round(done.length / list.length * 100) : 0;
       return `<div class="card"><div class="card-head"><h2>${esc(s.name)}</h2><span class="small muted">${roleLabel(s.role)} · ${done.length} de ${list.length}</span></div>
         <div class="bar"><i style="width:${pct}%"></i></div>
-        ${missing.length ? `<div class="small"><strong>Falta:</strong> ${missing.map(t => esc(t.label) + (t.critical ? ' <span class="tag warn">importante</span>' : '')).join(' · ')}</div>` : list.length ? '<div class="small" style="color:var(--green);font-weight:700">Tudo feito ✓</div>' : '<div class="small muted">Sem tarefas hoje</div>'}
+        ${missing.length ? `<div class="small"><strong>Falta:</strong> ${missing.map(t => esc(t.label) + (t.critical ? ' <span class="tag warn">importante</span>' : '')).join(' · ')}</div>
+          <div class="btn-row">${msgBtns(remindText(s, missing), 'Lembrar no WhatsApp')}</div>` : list.length ? '<div class="small" style="color:var(--done);font-weight:800">Tudo feito ✓</div>' : '<div class="small muted">Sem tarefas hoje</div>'}
       </div>`;
-    }).join('') : (S.staff.length ? '<div class="card"><p class="muted">Ninguém da equipe trabalha hoje.</p></div>' : '')}
+    }).join('') : ''}
     ${(() => {
       const soon = iso(addDays(d, 3));
       const due = S.todos.filter(t => (!t.done || S.justDone.has(t.id)) && t.due && t.due <= soon);
@@ -348,11 +368,25 @@ function rotinasView() {
         ${items.map(t => `<div class="small">• ${esc(t.label)}${t.critical ? ' <span class="tag warn">importante</span>' : ''}</div>`).join('') || '<div class="small muted">Nada programado</div>'}</div>`;
     }).join('') : `
     <div class="card"><div class="card-head"><h2>${esc(s.name)}</h2><span class="small muted">${roleLabel(s.role)} · ${daysLabel(s.days)}</span></div>
-      <div class="list">${list.map(t => `<div class="item"><div class="grow" style="opacity:${t.active ? 1 : .45}"><span class="t">${esc(t.label)}</span>
-          <span class="m">${freqLabel(t, s)}${t.active ? '' : ' · pausada'}</span></div>
-          <button class="btn sm${t.critical ? ' primary' : ''}" data-act="tcrit" data-id="${t.id}" aria-pressed="${t.critical}" title="Marcar como importante">!</button>
-          <button class="btn sm" data-act="tactive" data-id="${t.id}">${t.active ? 'Pausar' : 'Ativar'}</button>
-          <button class="btn sm danger" data-act="tdel" data-id="${t.id}" aria-label="Remover tarefa">×</button></div>`).join('') || '<p class="muted small">Nenhuma tarefa ainda.</p>'}</div>
+      <div class="list">${list.map(t => S.editTask === t.id ? `
+        <form class="item" data-form="edittask" data-id="${t.id}" style="flex-direction:column;align-items:stretch;gap:10px;padding:12px 0">
+          <label class="f">Tarefa<input type="text" name="label" value="${esc(t.label)}" maxlength="120" required></label>
+          <div class="grid2">
+            <label class="f">Frequência<select name="freq">${Object.entries(D.FREQ_LABEL).map(([k, l]) => `<option value="${k}"${k === t.freq ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+            <label class="f">Em qual dia<select name="weekday">${sorted.map(i => `<option value="${i}"${i === t.weekday ? ' selected' : ''}>${D.DAY_LONG[i]}</option>`).join('')}</select></label>
+          </div>
+          <label style="display:flex;gap:10px;align-items:center;font-weight:700"><input type="checkbox" name="critical" ${t.critical ? 'checked' : ''} style="width:20px;height:20px"> Importante</label>
+          <label style="display:flex;gap:10px;align-items:center;font-weight:700"><input type="checkbox" name="paused" ${t.active ? '' : 'checked'} style="width:20px;height:20px"> Pausada (some da lista do funcionário)</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn primary" type="submit">Salvar</button>
+            <button class="btn" type="button" data-act="tedit" data-id="">Cancelar</button>
+            <button class="btn danger" type="button" data-act="tdel" data-id="${t.id}" style="margin-left:auto">Remover</button>
+          </div>
+        </form>` : `
+        <button class="item" data-act="tedit" data-id="${t.id}" style="width:100%;border-left:none;border-right:none;border-bottom:none;background:transparent;text-align:left;cursor:pointer">
+          <span class="grow" style="opacity:${t.active ? 1 : .45}"><span class="t">${esc(t.label)}${t.critical ? ' <span class="tag warn">importante</span>' : ''}</span>
+          <span class="m">${freqLabel(t, s)}${t.active ? '' : ' · pausada'}</span></span>
+          <span class="small" style="color:var(--accent);font-weight:800">Editar</span></button>`).join('') || '<p class="muted small">Nenhuma tarefa ainda.</p>'}</div>
     </div>
     <form class="card" data-form="addtask" style="background:var(--soft)"><h2>Adicionar tarefa</h2>
       <label class="f">Tarefa<select name="label">${lib.map(l => `<option>${esc(l)}</option>`).join('')}<option value="__outra">Outra…</option></select></label>
@@ -371,12 +405,22 @@ const patchTask = async (id, patch) => {
   must(await sb.from('tasks').update(patch).eq('id', id));
   Object.assign(S.tasks.find(t => t.id === id), patch); render();
 };
+ACT.tedit = d => { S.editTask = d.id || null; render(); };
+FORM.edittask = async (fd, f) => {
+  const label = String(fd.get('label') || '').trim();
+  if (!label) throw new Error('Escreva o nome da tarefa');
+  const freq = String(fd.get('freq'));
+  const patch = { label: label.slice(0, 120), freq, weekday: freq === 'daily' ? null : Number(fd.get('weekday')), critical: fd.get('critical') === 'on', active: fd.get('paused') !== 'on' };
+  S.editTask = null;
+  await patchTask(f.dataset.id, patch);
+  toast('Tarefa atualizada');
+};
 ACT.tcrit = d => patchTask(d.id, { critical: !S.tasks.find(t => t.id === d.id).critical });
 ACT.tactive = d => patchTask(d.id, { active: !S.tasks.find(t => t.id === d.id).active });
 ACT.tdel = async (d, btn) => {
   if (btn.dataset.armed !== '1') { btn.dataset.armed = '1'; btn.textContent = 'Remover?'; return; }
   must(await sb.from('tasks').delete().eq('id', d.id));
-  S.tasks = S.tasks.filter(t => t.id !== d.id); render();
+  S.editTask = null; S.tasks = S.tasks.filter(t => t.id !== d.id); render();
 };
 FORM.addtask = async fd => {
   const s = S.staff.find(x => x.id === S.rotStaff) || S.staff[0];
@@ -712,19 +756,31 @@ ACT.pset = async d => {
 
 // ───────── Equipe e casa ─────────
 function inviteText(s, pin) {
-  return `Oi, ${s.name}! A partir de agora as suas tarefas da casa ficam neste link:\n${staffUrl(s.token)}\n\nSeu PIN é ${pin}.\nDica: abra o link e salve na tela inicial do celular (menu ⋮ → “Adicionar à tela inicial”).`;
+  return `Oi, ${firstName(s.name)}! A partir de agora as tarefas da casa ficam neste link, com o dia de hoje e a semana:\n${staffUrl(s.token)}\n\nSeu PIN é ${pin}.\n\nComo usar:\n1. Abra o link e digite o PIN\n2. Marque cada tarefa quando terminar ✓\n3. Se faltar alguma coisa (produto, gasolina…), toque em “Avisar a família”\n\nDica: salve o link na tela inicial do celular (menu ⋮ → “Adicionar à tela inicial”).`;
 }
+const linkAgainText = s => `Oi, ${firstName(s.name)}! Aqui está de novo o link das suas tarefas:\n${staffUrl(s.token)}\nO PIN é o mesmo de antes.`;
 function equipeView() {
   return `
     <div><h1>Equipe e casa</h1><p class="sub">Cada pessoa recebe um link e um PIN. Não precisa baixar nada.</p></div>
     ${S.staff.map(s => {
       const pin = S.pins[s.id];
+      const generic = s.name.trim().toLowerCase() === roleLabel(s.role).toLowerCase();
+      if (S.editStaff === s.id) return `<form class="card" data-form="editstaff" data-id="${s.id}" style="gap:10px">
+        <h2>Editar ${esc(s.name)}</h2>
+        <div class="grid2"><label class="f">Nome<input type="text" name="name" value="${generic ? '' : esc(s.name)}" maxlength="40" placeholder="Ex.: Maria" required></label>
+          <label class="f">Função<input type="text" value="${roleLabel(s.role)}" disabled></label></div>
+        <span class="small muted" style="font-weight:700">Dias de trabalho</span>
+        <div class="days">${D.DAY_SHORT.map((d, i) => `<label><input type="checkbox" name="day" value="${i}" ${s.days.includes(i) ? 'checked' : ''}><span>${d}</span></label>`).join('')}</div>
+        <div class="btn-row"><button class="btn primary" type="submit">Salvar</button><button class="btn" type="button" data-act="sedit" data-id="">Cancelar</button></div>
+      </form>`;
       return `<div class="card"><div class="card-head"><h2 style="opacity:${s.active ? 1 : .5}">${esc(s.name)}</h2><span class="small muted">${roleLabel(s.role)} · ${daysLabel(s.days)}</span></div>
+        ${generic && s.active ? `<div class="small" style="color:var(--warn);font-weight:700">Dê um nome para aparecer “Oi, Maria” em vez de “Oi, ${esc(s.name)}”. <button class="btn sm" data-act="sedit" data-id="${s.id}">Pôr nome</button></div>` : ''}
         ${!s.active ? '<span class="tag grey">Desativado: o link não funciona</span>' : pin
           ? `<p class="small">PIN: <strong>${pin}</strong>. Mande agora: ele não aparece de novo.</p>
-             <a class="btn primary" href="${waLink(inviteText(s, pin))}" target="_blank" rel="noopener">Enviar link e PIN no WhatsApp</a>`
-          : `<button class="btn primary" data-act="newpin" data-id="${s.id}">Gerar PIN e enviar link</button>`}
-        <div class="btn-row"><button class="btn sm" data-act="rotstaffgo" data-id="${s.id}">Ver rotina</button>
+             <div class="btn-row">${msgBtns(inviteText(s, pin), 'Enviar link e PIN no WhatsApp', 'btn primary')}</div>`
+          : `<div class="btn-row">${msgBtns(linkAgainText(s), 'Reenviar link no WhatsApp', 'btn primary')}</div>`}
+        <div class="btn-row"><button class="btn sm" data-act="sedit" data-id="${s.id}">Editar nome e dias</button><button class="btn sm" data-act="rotstaffgo" data-id="${s.id}">Ver rotina</button>
+          ${s.active ? `<button class="btn sm" data-act="newpin" data-id="${s.id}">Trocar PIN</button>` : ''}
           <button class="btn sm${s.active ? ' danger' : ''}" data-act="sactive" data-id="${s.id}">${s.active ? 'Desativar' : 'Reativar'}</button></div>
       </div>`;
     }).join('')}
@@ -743,6 +799,17 @@ function equipeView() {
       <p class="small">Para outro adulto da casa entrar, ele faz login com o e-mail dele e usa o código <strong>${esc(S.hh?.invite_code || '')}</strong>.</p>
       <button class="btn" data-act="logout">Sair da conta</button></div>`;
 }
+ACT.sedit = d => { S.editStaff = d.id || null; render(); };
+FORM.editstaff = async (fd, form) => {
+  const id = form.dataset.id;
+  const name = String(fd.get('name') || '').trim().slice(0, 40);
+  const days = fd.getAll('day').map(Number);
+  if (!name) throw new Error('Escreva o nome');
+  if (!days.length) throw new Error('Escolha pelo menos um dia');
+  must(await sb.from('staff').update({ name, days }).eq('id', id));
+  Object.assign(S.staff.find(x => x.id === id), { name, days });
+  S.editStaff = null; render(); toast('Salvo');
+};
 FORM.myname = async fd => {
   await setMyName(fd.get('me'));
   const me = S.members.find(m => m.user_id === S.user.id); if (me) me.name = String(fd.get('me') || '').trim();
@@ -786,7 +853,7 @@ const sDone = (taskId, date) => T.data.done.some(x => x.task_id === taskId && x.
 
 function staffView() {
   if (!T.data) return `<div class="center"><form class="card" data-form="pin" style="gap:14px">
-    <h1>App da Casa</h1><p class="sub">Digite o PIN que você recebeu.</p>
+    ${BRAND(40)}<h1 style="font-size:26px">Suas tarefas da casa</h1><p class="sub">Digite o PIN que você recebeu.</p>
     <label class="f"><span class="sr">PIN</span><input class="pin" type="tel" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" required autocomplete="one-time-code"></label>
     ${T.err ? `<p class="small" style="color:var(--danger);font-weight:700">${esc(T.err)}</p>` : ''}
     <button class="btn primary big" type="submit">Entrar</button></form></div>`;
@@ -797,11 +864,20 @@ function staffView() {
   const evToday = events.filter(e => e.date === di);
   const mealsToday = menu.filter(m => m.date === di);
   const works = staff.days.includes(wd(d));
+  const pend = todays.filter(t => !sDone(t.id, di));
+  const dayText = `${pend.length ? 'Resumo de hoje' : 'Terminei por hoje'} ✅ ${doneN}/${todays.length} tarefas feitas.` +
+    (doneN ? `\n\nFeito:\n${listLines(todays.filter(t => sDone(t.id, di)).map(t => t.label))}` : '') +
+    (pend.length ? `\n\nFicou pendente:\n${listLines(pend.map(t => t.label))}` : '') + `\n\n${firstName(staff.name)}`;
+  const lastAlert = T.lastAlert ? `<div class="card warn"><h2>Aviso enviado ✓</h2>
+      <p class="small">A família vê no app. Quer mandar também no WhatsApp?</p>
+      <div class="btn-row">${msgBtns(`Oi! Aviso da casa: ${T.lastAlert}.\n${firstName(staff.name)}`, 'Mandar no WhatsApp', 'btn primary')}<button class="btn sm" data-act="lastalertclose">Não precisa</button></div></div>` : '';
   const hoje = `
-    ${works ? `<div style="display:flex;flex-direction:column;gap:8px"><div class="card-head"><strong>Tarefas de hoje</strong><strong>${doneN} de ${todays.length}</strong></div>
-      <div class="bar"><i style="width:${todays.length ? Math.round(doneN / todays.length * 100) : 0}%"></i></div></div>
-      ${todays.map(t => { const ok = sDone(t.id, di); return `<button class="check${ok ? ' done' : ''}" data-act="smark" data-id="${t.id}" aria-pressed="${ok}">
-        <span class="box">${ok ? check : ''}</span><span><span class="lbl">${esc(t.label)}</span>${t.critical ? '<span class="crit">IMPORTANTE</span>' : ''}</span></button>`; }).join('')}`
+    ${lastAlert}
+    ${works ? `${todays.map(t => { const ok = sDone(t.id, di); return `<button class="check${ok ? ' done' : ''}" data-act="smark" data-id="${t.id}" aria-pressed="${ok}">
+        <span class="box">${ok ? check : ''}</span><span><span class="lbl">${esc(t.label)}</span>${t.critical ? '<span class="crit">IMPORTANTE</span>' : ''}</span></button>`; }).join('')}
+      ${todays.length && doneN ? `<div class="card"><h2>${pend.length ? 'Fechar o dia' : 'Tudo feito! 🎉'}</h2>
+        <p class="small">${pend.length ? `Faltam ${pend.length}. Se não der para terminar, avise a família:` : 'Mande o resumo para a família:'}</p>
+        <div class="btn-row">${msgBtns(dayText, pend.length ? 'Mandar resumo no WhatsApp' : 'Avisar que terminei', 'btn primary')}</div></div>` : ''}`
     : '<div class="card"><p>Hoje é sua folga. Veja a semana.</p></div>'}
     ${evToday.length ? `<div class="card"><h2>Agenda de hoje</h2>${evToday.map(e => `<div style="padding:6px 0;border-top:1px solid var(--line)"><strong>${e.time ? esc(e.time) + ' · ' : ''}${esc(e.title)}</strong>
       ${e.address ? `<div class="small">📍 <a href="https://maps.google.com/?q=${encodeURIComponent(e.address)}" target="_blank" rel="noopener">${esc(e.address)}</a></div>` : ''}${e.notes ? `<div class="small" style="color:var(--warn);font-weight:800">${esc(e.notes)}</div>` : ''}</div>`).join('')}</div>` : ''}
@@ -813,7 +889,7 @@ function staffView() {
     const es = events.filter(e => e.date === dd);
     const ms = menu.filter(m => m.date === dd);
     const isToday = dd === di;
-    return `<div class="card" style="${isToday ? 'outline:2px solid var(--green)' : ''}"><div class="card-head"><span class="dayhead">${D.DAY_LONG[i]} ${day.getDate()}/${day.getMonth() + 1}${isToday ? ' · hoje' : ''}</span>
+    return `<div class="card" style="${isToday ? 'outline:2px solid var(--accent)' : ''}"><div class="card-head"><span class="dayhead">${D.DAY_LONG[i]} ${day.getDate()}/${day.getMonth() + 1}${isToday ? ' · hoje' : ''}</span>
       <span class="small muted">${staff.days.includes(i) ? ts.length + ' tarefas' : 'Folga'}</span></div>
       ${ts.map(t => `<div class="small">${sDone(t.id, dd) ? '✓' : '•'} ${esc(t.label)}${t.critical ? ' <span class="tag warn">importante</span>' : ''}</div>`).join('')}
       ${es.map(e => `<div class="small" style="font-weight:800;color:var(--warn)">📅 ${e.time ? esc(e.time) + ' ' : ''}${esc(e.title)}${e.address ? ' · ' + esc(e.address) : ''}</div>`).join('')}
@@ -821,7 +897,8 @@ function staffView() {
   }).join('');
   const alerts = [...(D.ALERTS[staff.role] || []), ...D.COMMON_ALERTS];
   return `<div class="wrap">
-    <div><span class="house">${esc(household || '')}</span><p class="sub" style="margin-top:4px">${dateLabel(d)}</p><h1>${greet()}, ${esc(staff.name)}!</h1></div>
+    <div class="hero"><span class="hero-house">${esc(household || '')} · ${dateLabel(d)}</span><h1>${greet()}, ${esc(staff.name)}!</h1>
+      ${works && todays.length ? `<div class="hero-stat"><strong>${doneN}<span>/${todays.length}</span></strong><span>feitas hoje</span></div><div class="bar dark"><i style="width:${Math.round(doneN / todays.length * 100)}%"></i></div>` : `<p class="hero-sub">${works ? 'Nada programado para hoje.' : 'Hoje é sua folga.'}</p>`}</div>
     <div class="seg"><button class="${T.tab === 'hoje' ? 'on' : ''}" data-act="stab" data-v="hoje">Hoje</button><button class="${T.tab === 'semana' ? 'on' : ''}" data-act="stab" data-v="semana">Semana</button></div>
     ${T.tab === 'hoje' ? hoje : semana}
   </div>
@@ -851,7 +928,17 @@ ACT.smark = async d => {
 ACT.salert = async d => {
   const a = [...(D.ALERTS[T.data.staff.role] || []), ...D.COMMON_ALERTS][+d.i];
   must(await sb.rpc('staff_alert', { p_token: staffToken, p_pin: T.pin, p_kind: a.kind, p_label: a.label, p_item: a.item || null }));
-  T.sheet = false; render(); toast('Aviso enviado para a família ✓');
+  T.sheet = false; T.lastAlert = a.label; T.tab = 'hoje'; render(); window.scrollTo(0, 0); toast('Aviso enviado para a família ✓');
+};
+ACT.lastalertclose = () => { T.lastAlert = null; render(); };
+
+ACT.copy = async d => {
+  try { await navigator.clipboard.writeText(d.text); }
+  catch {
+    const ta = document.createElement('textarea'); ta.value = d.text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+  }
+  toast('Mensagem copiada. É só colar no WhatsApp.');
 };
 
 // ───────── início ─────────
